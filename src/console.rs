@@ -20,6 +20,37 @@ pub struct Console {
     allow_buffer: [u8; 64],
 }
 
+pub fn write_raw(data: &mut [u8]) {
+    let count = data.len();
+
+    let result = syscalls::allow(
+        DRIVER_NUMBER,
+        allow_nr::SHARE_BUFFER,
+        data,
+    );
+    if result.is_err() {
+        return;
+    }
+
+    let is_written = Cell::new(false);
+    let mut is_written_alarm = |_, _, _| is_written.set(true);
+    let subscription = syscalls::subscribe(
+        DRIVER_NUMBER,
+        subscribe_nr::SET_ALARM,
+        &mut is_written_alarm,
+    );
+    if subscription.is_err() {
+        return;
+    }
+
+    let result_code = unsafe { syscalls::command(DRIVER_NUMBER, command_nr::WRITE, count, 0) };
+    if result_code < 0 {
+        return;
+    }
+
+    syscalls::yieldk_for(|| is_written.get());
+}
+
 impl Console {
     pub fn new() -> Console {
         Console {
@@ -39,33 +70,7 @@ impl Console {
     }
 
     fn flush(&mut self, num_bytes_to_print: usize) {
-        let result = syscalls::allow(
-            DRIVER_NUMBER,
-            allow_nr::SHARE_BUFFER,
-            &mut self.allow_buffer[..num_bytes_to_print],
-        );
-        if result.is_err() {
-            return;
-        }
-
-        let is_written = Cell::new(false);
-        let mut is_written_alarm = |_, _, _| is_written.set(true);
-        let subscription = syscalls::subscribe(
-            DRIVER_NUMBER,
-            subscribe_nr::SET_ALARM,
-            &mut is_written_alarm,
-        );
-        if subscription.is_err() {
-            return;
-        }
-
-        let result_code =
-            unsafe { syscalls::command(DRIVER_NUMBER, command_nr::WRITE, num_bytes_to_print, 0) };
-        if result_code < 0 {
-            return;
-        }
-
-        syscalls::yieldk_for(|| is_written.get());
+        write_raw(&mut self.allow_buffer[..num_bytes_to_print]);
     }
 }
 
